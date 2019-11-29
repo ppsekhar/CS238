@@ -1,5 +1,6 @@
 import sys
 import numpy as np
+import pandas as pd
 import copy
 
 import argparse
@@ -8,6 +9,7 @@ import pdb
 from itertools import product
 
 parser = argparse.ArgumentParser()
+parser.add_argument('--infilename', metavar='N', type=str,help='file describing initial state')
 parser.add_argument('--outfilename', metavar='N', type=str,help='where to write policy')
 args = parser.parse_args()
 
@@ -191,12 +193,13 @@ def value_iteration(initial_state):
     return u_vals
 
 
-
-
-
 # TODO: deal with states not visited during value iteration
 def extract_policy(u_vals, output_filename):
-    pass
+    with open(output_filename, 'w') as f:
+        for state in u_vals:
+            # state: action
+            f.write("{}: {}\n".format(state, u_vals[state][0]))
+
 
 # Flatten microgrid into single tuple for hashing
 def flatten_microgrid(state): 
@@ -205,20 +208,37 @@ def flatten_microgrid(state):
         hashable_tuple = hashable_tuple + tuple(loc)
     return hashable_tuple
 
+
+'''
+Input file format:
+    num rows
+    num cols
+    mg 1
+    mg 2
+    etc.
+'''
+def get_initial_state(input_filename):
+    df = pd.read_csv(input_filename, names=list(range(4)))
+    grid_rows = int(df.iloc[0][0])
+    grid_cols = int(df.iloc[1][0])
+    initial_state = [[] for i in range(grid_rows)]
+    df_index = 2
+    for r in range(grid_rows):
+        for c in range(grid_cols):
+            p, c, e, m = df.iloc[df_index]
+            initial_state[r].append((int(p), int(c), int(e), int(m)))
+            df_index += 1
+    return initial_state
+
+
 # TODO: Generalize to worlds larger than 2x2
 def main():
     # Each microgrid has (P, C, E, $)
     # money and energy have to be MIN_UNIT <= E, $ <= MAX_UNIT
     # Grid ids assigned left to right, top to bottom
-    # TODO: read initial state from file
-    initial_state = [
-        [(2, 2, 1, 2), (2, 2, -1, 0)],
-        [(2, 2, 1, -3), (2, 2, 1, 0)]
-    ]
+    initial_state = get_initial_state(args.infilename)
     flatten_microgrid(initial_state)
 
-    # TODO: retrieve outfilename from args
-    # print(reward(initial_state))
     u_vals = value_iteration(initial_state)
     for state in u_vals:
         if u_vals[state][0] != (0, 1, 0):
