@@ -11,6 +11,7 @@ from itertools import product
 parser = argparse.ArgumentParser()
 parser.add_argument('--infilename', metavar='N', type=str,help='file describing initial state')
 parser.add_argument('--outfilename', metavar='N', type=str,help='where to write policy')
+parser.add_argument('--reward', metavar='N', type=str,help='baseline, greedy, reg, rich, decay, more_money')
 args = parser.parse_args()
 
 # 1 unit of $ = 1 unit of E
@@ -46,11 +47,27 @@ GRID_LOCATION = {
 CONSUMER_CONSUMPTION = 1
 PRODUCER_PRODUCTION = 1
 
+def reward(state):
+    reward_type = args.reward
+    if reward_type == 'baseline':
+        return reward_baseline(state)
+    if reward_type == 'greedy':
+        return reward_greedy(state)
+    if reward_type == 'reg':
+        return reward_regulated(state)
+    if reward_type == 'rich':
+        return reward_rich(state)
+    if reward_type == 'decay':
+        return reward_decay(state)
+    if reward_type == 'more_money':
+        return reward_more_money(state)
+
+    return reward_baseline(state)
 
 # B = 0 in deficit
 # otherwise A and B both 1
 # TODO: consider end states (out of bounds)
-def reward(state):
+def reward_baseline(state):
     total_reward = 0
     for r in state:
         for microgrid in r:
@@ -62,6 +79,94 @@ def reward(state):
                 b = 0
             total_reward += a * energy + b * money
     return total_reward
+
+# money is more important than energy (greedy society)
+def reward_greedy(state):
+    total_reward = 0
+    for r in state:
+        for microgrid in r:
+            energy = microgrid[2]
+            money = microgrid[3]
+            a = 1
+            b = 3
+            if energy < 0:
+                b = 0
+            total_reward += a * energy + b * money
+    return total_reward
+
+# after certain amount of money, you start being penalized (still greedy)
+def reward_regulated(state):
+    total_reward = 0
+    for r in state:
+        for microgrid in r:
+            energy = microgrid[2]
+            money = microgrid[3]
+            a = 1
+            b = 3
+            if energy < 0:
+                b = 0
+
+            if money >= MAX_UNIT:
+                b = -1
+
+            total_reward += a * energy + b * money
+    return total_reward
+
+# rising tide lifts all boats - we all benefit from someone being richest
+# no one can have a deficit
+def reward_rich(state):
+    total_reward = 0
+    max_money = MIN_UNIT - 10
+    for r in state:
+        for microgrid in r:
+            energy = microgrid[2]
+            money = microgrid[3]
+            a = 1
+            b = 3
+            if money > max_money:
+                max_money = money
+            if energy < 0:
+                b = 0
+
+            total_reward += a * energy
+
+    total_reward += pow(b, 3) * max_money
+    return total_reward
+
+# richer you are the less you care
+def reward_decay(state):
+    total_reward = 0
+    max_money = MIN_UNIT - 10
+    for r in state:
+        for microgrid in r:
+            energy = microgrid[2]
+            money = microgrid[3]
+            a = 1
+            b = 1
+            if money > 0:
+                a = 1 / pow(money, 2)
+                b = 1 / pow(money, 2)
+            if energy < 0:
+                b = 0
+
+            total_reward += a * energy + b * money
+
+    return total_reward
+
+# i'd rather starve - we can go into energy deficit, but no money is unacceptable
+def reward_more_money(state):
+    total_reward = 0
+    for r in state:
+        for microgrid in r:
+            energy = microgrid[2]
+            money = microgrid[3]
+            a = 1
+            b = 1
+            if money < 0:
+                a = 0
+            total_reward += a * energy + b * money
+    return total_reward
+
 
 
 def calculate_next_state(curr_state, action):
@@ -226,11 +331,14 @@ def main():
     flatten_microgrid(initial_state)
 
     u_vals = value_iteration(initial_state)
-    # for state in u_vals:
-    #     if u_vals[state][0] != (0, 1, 0):
-    #         print(state, u_vals[state])
+    actions_taken = {}
+    for state in u_vals:
+        if u_vals[state][0] != (0, 1, 0):
+            # print(state, u_vals[state])
+            actions_taken[state] = u_vals[state]
 
-    extract_policy(u_vals, args.outfilename)
+    #extract_policy(u_vals, args.outfilename)
+    extract_policy(actions_taken, args.outfilename)
 
 
 if __name__ == '__main__':
