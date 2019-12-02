@@ -1,6 +1,8 @@
 import sys
 import numpy as np
 import pandas as pd
+from visualize import visualize_policy
+
 import copy
 
 import argparse
@@ -12,6 +14,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--infilename', metavar='N', type=str,help='file describing initial state')
 parser.add_argument('--outfilename', metavar='N', type=str,help='where to write policy')
 parser.add_argument('--reward', metavar='N', type=str,help='baseline, greedy, reg, rich, decay, more_money')
+parser.add_argument('--vis', type=bool, default=True, help='visualize generated policy')
+parser.add_argument('--reward_thresh', type=float, default=5, help="reward required to visualize action")
 args = parser.parse_args()
 
 # 1 unit of $ = 1 unit of E
@@ -339,6 +343,8 @@ def main():
 
     #extract_policy(u_vals, args.outfilename)
     extract_policy(actions_taken, args.outfilename)
+    if args.vis: 
+        visualize_policy(args.outfilename, args.reward_thresh)
 
 
 if __name__ == '__main__':
