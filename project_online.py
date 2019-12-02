@@ -12,11 +12,16 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--infilename', metavar='N', type=str,help='file describing initial state')
 parser.add_argument('--outfilename', metavar='N', type=str,help='where to write policy')
 parser.add_argument('--reward', metavar='N', type=str,help='baseline, greedy, reg, rich, decay, more_money')
+parser.add_argument('--consumption', metavar='N', type=int,help='energy consumed by each consumer')
+parser.add_argument('--production', metavar='N', type=int,help='energy produced by each producer')
+parser.add_argument('--price', metavar='N', type=float,help='price of each unit energy')
 args = parser.parse_args()
 
-# 1 unit of $ = 1 unit of E
-MIN_UNIT = -1
-MAX_UNIT = 1
+# Encodes min and max units of energy possible.
+# Min money is price associated with min energy
+# and max money is price associated with max energy.
+MIN_UNIT = -5
+MAX_UNIT = 5
 
 POSSIBLE_ACTIONS = [0, 1, 2, 3]
 
@@ -44,8 +49,6 @@ GRID_LOCATION = {
     3: (1, 1)
 }
 
-CONSUMER_CONSUMPTION = 1
-PRODUCER_PRODUCTION = 1
 
 def reward(state):
     reward_type = args.reward
@@ -167,8 +170,9 @@ def reward_more_money(state):
             total_reward += a * energy + b * money
     return total_reward
 
-def calculate_next_state(curr_state, action):
-    buyer, seller, amount = action
+def calculate_next_state(curr_state, action, consumption, production, price):
+    # NOTE: amount encoded by action is amount of energy, not amount of money
+    buyer, seller, energy_amount = action
     next_state = copy.deepcopy(curr_state)
 
     # update buyer
@@ -176,26 +180,30 @@ def calculate_next_state(curr_state, action):
     microgrid1 = curr_state[buyer_loc[0]][buyer_loc[1]]
 
     # Assume consumers consume 1 energy, producers produce 1
-    new_energy1 = microgrid1[2] + amount - microgrid1[1]*CONSUMER_CONSUMPTION \
-                    + microgrid1[0]*PRODUCER_PRODUCTION
-    microgrid1_next = (microgrid1[0], microgrid1[1], new_energy1, microgrid1[3] - amount)
+    new_energy1 = microgrid1[2] + energy_amount - microgrid1[1]*consumption \
+                    + microgrid1[0]*production
+    microgrid1_next = (microgrid1[0], microgrid1[1], new_energy1, microgrid1[3] - price*energy_amount)
     next_state[buyer_loc[0]][buyer_loc[1]] = microgrid1_next
 
     # update seller
     seller_loc = GRID_LOCATION[seller]
     microgrid2 = curr_state[seller_loc[0]][seller_loc[1]]
 
-    new_energy2 =  microgrid2[2] - amount - microgrid2[1]*CONSUMER_CONSUMPTION \
-                    + microgrid2[0]*PRODUCER_PRODUCTION
-    microgrid2_next = (microgrid2[0], microgrid2[1], new_energy2, microgrid2[3] + amount)
+    new_energy2 = microgrid2[2] - energy_amount - microgrid2[1]*consumption \
+                    + microgrid2[0]*production
+    microgrid2_next = (microgrid2[0], microgrid2[1], new_energy2, microgrid2[3] + price*energy_amount)
     next_state[seller_loc[0]][seller_loc[1]] = microgrid2_next
 
     return next_state
 
 
-def generate_states(u_vals, initial_state):
-    valid_energy_money_values = [i for i in range(MIN_UNIT, MAX_UNIT + 1)]
-    energy_money_combos = list(product(valid_energy_money_values, valid_energy_money_values))
+# TODO: if this function is used (it isn't right now so not a problem),
+# a realistic method of finding all valid money values must be found in the
+# case where each unit of energy is worth some fractional price.
+def generate_states(initial_state, price):
+    valid_energy_values = [i for i in range(MIN_UNIT, MAX_UNIT + 1)]
+    valid_money_values = [i for i in range(MIN_UNIT*price, MAX_UNIT*price + 1)]
+    energy_money_combos = list(product(valid_energy_values, valid_money_values))
 
     # Assume initial state is 2 X 2
     mg_combos = []
@@ -215,7 +223,7 @@ def generate_states(u_vals, initial_state):
 
 
 
-def value_iteration(initial_state):
+def value_iteration(initial_state, consumption, production, price):
 
     # state: (action, utility)
     # action: (buyer, seller, $ amount)
@@ -227,29 +235,25 @@ def value_iteration(initial_state):
         for action_amount in POSSIBLE_ACTIONS:
             # Sell 
             curr_action1 = (trader, TRADE_ORDER[trader], action_amount)
-            next_state1 = calculate_next_state(state, curr_action1)
+            next_state1 = calculate_next_state(state, curr_action1, consumption, production, price)
             viable_next_states.append(next_state1)
 
             # Buy 
             curr_action2 = (TRADE_ORDER[trader], trader, action_amount)
-            next_state2 = calculate_next_state(state, curr_action2)
+            next_state2 = calculate_next_state(state, curr_action2, consumption, production, price)
             viable_next_states.append(next_state2)
     
-    # state_space = generate_states(u_vals, initial_state)
+    # state_space = generate_states(initial_state, price)
     while num_states_visited < 10000 and len(viable_next_states) > 0: # TODO: end at convergence
         num_states_visited+=1
         state = viable_next_states.pop(0)
         # TODO: loop through all states
         '''
-        For Gauss-Seidel iteration, we need to pick a state ordering
+        For Gauss-Seidel iteration, we pick a state ordering
         here and loop through all states, updating asynchronously as we go.
-        We have 2 options for this:
-            1. Use the MIN_UNIT and MAX_UNIT bounds to come up with all possible
-            combinations of microgrid states. This will make the energy and money
+            We use the MIN_UNIT and MAX_UNIT bounds to come up with all possible
+            combinations of microgrid states. This makes the energy and money
             initializations of the microgrids meaningless.
-            2. Only consider states that could be reachable from the initial state
-            (ex. same total money as initialized, etc.). This makes the microgrid
-            initializations matter, but is probably more difficult to do.
         '''
         state_key = flatten_microgrid(state)
         if state_key not in u_vals:
@@ -266,7 +270,7 @@ def value_iteration(initial_state):
 
                 # Sell 
                 curr_action1 = (trader, TRADE_ORDER[trader], action_amount)
-                next_state1 = calculate_next_state(state, curr_action1)
+                next_state1 = calculate_next_state(state, curr_action1, consumption, production, price)
                 viable_next_states.append(next_state1)
                 next_state1_key = flatten_microgrid(next_state1)
                 
@@ -276,7 +280,7 @@ def value_iteration(initial_state):
                 
                 # Buy 
                 curr_action2 = (TRADE_ORDER[trader], trader, action_amount)
-                next_state2 = calculate_next_state(state, curr_action2)
+                next_state2 = calculate_next_state(state, curr_action2, consumption, production, price)
                 viable_next_states.append(next_state2)
                 next_state2_key = flatten_microgrid(next_state2)
                 
@@ -342,7 +346,7 @@ def main():
     initial_state = get_initial_state(args.infilename)
     flatten_microgrid(initial_state)
 
-    u_vals = value_iteration(initial_state)
+    u_vals = value_iteration(initial_state, args.consumption, args.production, args.price)
     actions_taken = {}
     for state in u_vals:
         if u_vals[state][0] != (0, 1, 0):
